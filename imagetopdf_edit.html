@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Single-Page Image PDF Editor</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f7f8fc;
+      height: 100vh;
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+    }
+    .sidebar {
+      width: 270px;
+      background: #eef2fa;
+      border-right: 1.5px solid #d2d7ee;
+      padding: 30px 16px 0 16px;
+      box-sizing: border-box;
+    }
+    .sidebar h2 {
+      margin-top: 0;
+      font-size: 1.35em;
+      color: #555;
+      margin-bottom: 20px;
+    }
+    .upload-btn {
+      display: block;
+      margin-bottom: 20px;
+      background: linear-gradient(45deg, #667eea, #764ba2);
+      color: #fff;
+      border: none;
+      border-radius: 30px;
+      padding: 13px 22px;
+      font-size: 1em;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 6px 18px #764ba22c;
+      transition: background 0.2s;
+    }
+    .upload-btn:hover { background: linear-gradient(45deg, #764ba2, #667eea); }
+    .thumb-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .thumb-list li {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-bottom: 8px;
+      position: relative;
+    }
+    .thumb-list img {
+      width: 54px;
+      height: 54px;
+      object-fit: cover;
+      border-radius: 7px;
+      border: 2px solid #d1d7ed;
+      background: #fff;
+      cursor: move;
+    }
+    .delete-thumb {
+      position: absolute; top: 1px; right: 1px;
+      background: #fd4444;
+      color: white;
+      border: none;
+      font-size: 0.7em;
+      width: 19px; height: 19px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0;
+    }
+    /* Main workspace is big right panel */
+    .editor-panel {
+      flex: 1;
+      background: #fff;
+      padding: 0;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-width: 0;
+    }
+    .canvas-area {
+      position: relative;
+      /* A4 ratio ~1.414, so 707x1000 is 1:1.414 */
+      width: 707px;
+      height: 1000px;
+      background: #f8fafe;
+      margin-top: 38px;
+      margin-bottom: 10px;
+      border: 2.5px solid #764ba2;
+      border-radius: 13px;
+      box-shadow: 0 6px 36px #764ba217;
+      overflow: hidden;
+      box-sizing: content-box;
+    }
+    .draggable-img {
+      position: absolute;
+      border: 1.5px solid #667eea88;
+      border-radius: 6px;
+      box-shadow: 0 4px 16px #764ba23a;
+      cursor: move;
+      background: #fff;
+      transition: box-shadow .2s;
+      z-index: 1;
+    }
+    .draggable-img.selected {
+      border: 2.7px solid #ffae00;
+      box-shadow: 0 2px 30px #ffc4001a;
+      z-index: 2;
+    }
+    .resize-handle {
+      position: absolute;
+      right: 3px;
+      bottom: 3px;
+      width: 15px;
+      height: 15px;
+      background: #fffc;
+      border: 2px solid #764ba2;
+      border-radius: 4px;
+      cursor: nwse-resize;
+      z-index: 10;
+      box-shadow: 0 2px 6px #764ba239;
+    }
+    .canvas-toolbar {
+      margin: 0 0 8px 0;
+      text-align: right;
+      width: 707px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .export-btn {
+      background: linear-gradient(45deg, #667eea, #764ba2);
+      color: #fff;
+      font-weight: bold;
+      border: none;
+      border-radius: 30px;
+      padding: 10px 24px;
+      font-size: 1.05em;
+      cursor: pointer;
+    }
+    .success-message {
+      color: #28a745;
+      font-weight: 600;
+      margin: 5px 0 10px 0;
+      display: none;
+      background: #ecfaec;
+      border-radius: 7px;
+      padding: 8px 0;
+      text-align: center;
+    }
+    @media (max-width: 1100px) {
+      .editor-panel, .canvas-area, .canvas-toolbar { width: 98vw !important; min-width: 0 !important; }
+    }
+    @media (max-width: 930px) {
+      .container { flex-direction:column; }
+      .sidebar { width: 100%; border-right: none;}
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h2>Arrange Images</h2>
+    <input id="fileInput" type="file" accept="image/*" multiple style="display:none;">
+    <button class="upload-btn" id="uploadBtn">Upload Images</button>
+    <ul class="thumb-list" id="thumbList"></ul>
+  </div>
+  <div class="editor-panel">
+    <div class="canvas-toolbar">
+      <button class="export-btn" id="exportBtn">Export as PDF</button>
+    </div>
+    <div class="canvas-area" id="canvasArea"></div>
+    <div class="success-message" id="successMsg">✅ PDF created and downloaded!</div>
+  </div>
+  <script>
+    // --- Image state ---
+    let images = []; // { id, src, x, y, w, h, z }
+    let idCounter = 1;
+    let draggingImg = null, dragOffset = {x:0, y:0};
+    let resizingImg = null, resizeAnchor = null;
+    let selectedImgId = null;
+
+    const thumbList = document.getElementById('thumbList');
+    const canvasArea = document.getElementById('canvasArea');
+    const successMsg = document.getElementById('successMsg');
+
+    // --- Upload and Imaging ---
+    document.getElementById('uploadBtn').onclick = () => fileInput.click();
+    document.getElementById('fileInput').onchange = e => {
+      Array.from(e.target.files).forEach(f => {
+        let reader = new FileReader();
+        reader.onload = e2 => {
+          images.push({
+            id: idCounter++,
+            src: e2.target.result,
+            x: 40 + Math.random()*60,
+            y: 40 + Math.random()*50,
+            w: 190,
+            h: 160,
+            z: images.length,
+          });
+          renderThumbs();
+          renderCanvas();
+        };
+        reader.readAsDataURL(f);
+      });
+      fileInput.value = '';
+    };
+    function renderThumbs() {
+      thumbList.innerHTML = "";
+      images.forEach((img, idx) => {
+        let li = document.createElement('li');
+        let imageElem = document.createElement('img');
+        imageElem.src = img.src;
+        imageElem.draggable = false;
+        imageElem.title = "Click to select";
+        imageElem.onclick = () => { selectImg(img.id); };
+        const del = document.createElement('button');
+        del.className = 'delete-thumb';
+        del.innerHTML = '×';
+        del.onclick = (ev) => {
+          images = images.filter(im => im.id !== img.id);
+          renderThumbs(); renderCanvas();
+        };
+        li.appendChild(imageElem);
+        li.appendChild(del);
+        thumbList.appendChild(li);
+      });
+    }
+    // --- Canvas/Editor ---
+    function renderCanvas() {
+      canvasArea.innerHTML = '';
+      images.sort((a,b)=>a.z-b.z);
+      images.forEach(img=>{
+        let wrapper = document.createElement('div');
+        wrapper.className = "draggable-img" + (img.id === selectedImgId ? " selected" : "");
+        wrapper.style.left = img.x + 'px';
+        wrapper.style.top = img.y + 'px';
+        wrapper.style.width = img.w + 'px';
+        wrapper.style.height = img.h + 'px';
+        wrapper.style.zIndex = img.z+1;
+
+        // For dragging
+        wrapper.onmousedown = ev => {
+          if (ev.target.classList.contains('resize-handle')) return;
+          draggingImg = img;
+          dragOffset.x = ev.offsetX;
+          dragOffset.y = ev.offsetY;
+          selectImg(img.id);
+        };
+
+        // For resizing
+        let handle = document.createElement('div');
+        handle.className = 'resize-handle';
+        handle.onmousedown = ev => {
+          ev.stopPropagation();
+          resizingImg = img;
+          resizeAnchor = { x: ev.clientX, y: ev.clientY, w: img.w, h: img.h };
+          selectImg(img.id);
+        };
+
+        // For selection by click
+        wrapper.onclick = ()=> selectImg(img.id);
+
+        let imageElem = document.createElement('img');
+        imageElem.src = img.src;
+        imageElem.alt = '';
+        imageElem.draggable = false;
+        imageElem.style.width = "100%";
+        imageElem.style.height = "100%";
+        imageElem.style.userSelect = 'none';
+
+        wrapper.appendChild(imageElem);
+        wrapper.appendChild(handle);
+        canvasArea.appendChild(wrapper);
+      });
+    }
+    function selectImg(id) {
+      selectedImgId = id;
+      // Bring to front
+      let im = images.find(im=>im.id===id);
+      if(!im) return;
+      images.forEach(img=> { if(img!==im && img.z>im.z) img.z--; });
+      im.z = images.length - 1;
+      renderThumbs(); renderCanvas();
+    }
+    window.addEventListener('mousemove', function(ev) {
+      if (draggingImg) {
+        let cx = ev.clientX - canvasArea.getBoundingClientRect().left;
+        let cy = ev.clientY - canvasArea.getBoundingClientRect().top;
+        draggingImg.x = Math.max(0, Math.min(canvasArea.offsetWidth - draggingImg.w, cx - dragOffset.x));
+        draggingImg.y = Math.max(0, Math.min(canvasArea.offsetHeight - draggingImg.h, cy - dragOffset.y));
+        renderCanvas();
+      } else if (resizingImg) {
+        let dx = ev.clientX - resizeAnchor.x, dy = ev.clientY - resizeAnchor.y;
+        resizingImg.w = Math.max(30, Math.min(900, resizeAnchor.w + dx));
+        resizingImg.h = Math.max(24, Math.min(1000, resizeAnchor.h + dy));
+        renderCanvas();
+      }
+    });
+    window.addEventListener('mouseup', function() {
+      draggingImg = null;
+      resizingImg = null;
+    });
+
+    // ---- Export as PDF ----
+    document.getElementById('exportBtn').onclick = async function() {
+      if (!images.length) return;
+      const { jsPDF } = window.jspdf;
+      let pdf = new jsPDF({ unit: 'pt', format: [707, 1000] }); // 707x1000pt "A4"
+      // Use promise-wrapped images for drawing:
+      async function addAllImages() {
+        for (const img of images) {
+          const htmlImg = new window.Image();
+          await new Promise((resolve, reject) => {
+            htmlImg.onload = resolve;
+            htmlImg.onerror = reject;
+            htmlImg.src = img.src;
+          });
+          pdf.addImage(htmlImg, 'JPEG', img.x, img.y, img.w, img.h, undefined, "FAST");
+        }
+      }
+      await addAllImages();
+      pdf.save("arranged-images.pdf");
+      successMsg.style.display = '';
+      setTimeout(()=>{ successMsg.style.display='none'; }, 2800);
+    };
+
+    // For drag-and-drop reorder on thumbs (optional). Could be added/improved as needed.
+
+  </script>
+</body>
+</html>
